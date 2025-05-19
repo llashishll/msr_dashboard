@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <base target="_top">
+    <title>Satsang Dashboard by Day</title>
+    <style>
+      /* Basic Styles */
+      body { font-family: Arial, sans-serif; font-size: 11px; margin: 15px; }
+      table { border-collapse: collapse; width: auto; border: 1px solid #ccc; margin-bottom: 25px; }
+      th, td { border: 1px solid #ccc; padding: 4px 6px; text-align: center; vertical-align: middle; box-sizing: border-box; }
+      th { background-color: #f2f2f2; font-weight: bold; position: sticky; top: 0; z-index: 10; }
+
+      /* Pivoted Table Specific Styles */
+      .date-header { background-color: #e0e0e0; font-size: 12px; position: sticky; top: 0; z-index: 11; }
+      .sub-header { position: sticky; top: 28px; background-color: #f2f2f2; z-index: 10; } /* Adjust top based on date-header height */
+      th.sn-header, td.sn-cell { position: sticky; left: 0; z-index: 12; background-color: #e8e8e8; min-width: 40px; width: 40px; }
+      th.avg-header, td.avg-cell { position: sticky; left: 40px; z-index: 12; background-color: #e8e8e8; min-width: 80px; width: 80px; }
+      th.centre-header { position: sticky; left: 120px; z-index: 12; background-color: #e8e8e8; min-width: 130px; width: 130px; }
+      td.sn-cell { background-color: #f9f9f9; z-index: 1; font-weight: normal; }
+      td.avg-cell { position: sticky; left: 40px; background-color: #f9f9f9; z-index: 1; }
+      td.centre-cell { position: sticky; left: 120px; background-color: #f9f9f9; z-index: 1; text-align: center; } /* Center align centre name */
+      tbody tr:nth-child(even) td.sn-cell, tbody tr:nth-child(even) td.avg-cell, tbody tr:nth-child(even) td.centre-cell { background-color: #f0f0f0; }
+      tbody tr:hover td.sn-cell, tbody tr:hover td.avg-cell, tbody tr:hover td.centre-cell { background-color: #e0e0e0 !important; }
+      tbody tr:hover td { background-color: #f1f1f1 !important; }
+      th.sn-header.sub, th.avg-header.sub, th.centre-header.sub { top: 28px; z-index: 11; }
+      td.centre-cell.bold-centre { font-weight: bold; }
+
+      /* General Styles */
+      h1 { margin-bottom: 5px; }
+      h2 { background-color: #4CAF50; color: white; padding: 8px 15px; margin-top: 20px; margin-bottom: 10px; border-radius: 4px; font-size: 1.3em; }
+      .no-data { font-style: italic; color: #777; margin-left: 15px; margin-bottom: 20px; }
+      .controls { margin-bottom: 20px; padding: 10px; background-color: #eee; border: 1px solid #ccc; border-radius: 4px; display: flex; align-items: center; gap: 15px; flex-wrap: wrap; }
+      .controls label { font-weight: bold; margin-right: 5px; }
+      .controls select, .controls button { padding: 5px 8px; font-size: 11px; cursor: pointer; }
+      .controls button:disabled { cursor: not-allowed; opacity: 0.6; }
+      #exportStatus { margin-left: 10px; font-style: italic; color: #333; }
+      .status-error { color: red; font-weight: bold;}
+      .status-success { color: green; }
+    </style>
+</head>
+<body>
+    <h1>Satsang Report by Day</h1>
+
+    <!-- Controls -->
+    <div class="controls">
+        <label for="monthSelector">Select Month:</label>
+        <select id="monthSelector">
+            <? if (availableMonths && availableMonths.length > 0) { ?> <? availableMonths.forEach(month => { var displayMonth = month; try { var parts = month.split('-'); var date = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, 1); displayMonth = date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' }); } catch(e) {} ?> <option value="<?= month ?>" <?= month === selectedMonth ? 'selected' : '' ?>><?!= displayMonth ?></option> <? }) ?> <? } else if (selectedMonth) { ?> <? var displayMonth = selectedMonth; try { var parts = selectedMonth.split('-'); var date = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, 1); displayMonth = date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' }); } catch(e) {} ?> <option value="<?= selectedMonth ?>" selected><?!= displayMonth ?> (No Data)</option> <? } else { ?> <option value="" disabled selected>-- No Months Available --</option> <? } ?>
+        </select>
+        <button id="exportButton" <?!= !selectedMonth ? 'disabled' : '' ?> >Export <?= selectedMonth ? selectedMonth : 'Month' ?> to Excel</button>
+        <span id="exportStatus"></span>
+    </div>
+
+    <? if (error) { ?>
+        <p class="status-error">Error loading dashboard: <?= error ?></p>
+    <? } else if (!selectedMonth) { ?>
+         <p class="no-data">Please select a month, or add data to the sheet.</p>
+    <? } else { ?>
+
+        <!-- ===================================================== -->
+        <!-- PIVOTED TABLES (Sunday / Wednesday)                   -->
+        <!-- ===================================================== -->
+        <? function generatePivotedTable(title, data, sortedDates, eventDetailHeaders, eventDetailKeys, selectedMonth) { ?>
+            <h2><?= title ?></h2>
+            <? if (!data || !data.templateData || data.templateData.length === 0) { ?>
+                 <? var displayMonth = selectedMonth; try { var parts = selectedMonth.split('-'); var date = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, 1); displayMonth = date.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }); } catch(e) {} ?>
+                <p class="no-data">No <?= title.toLowerCase() ?> data available for <?= displayMonth ?>.</p>
+            <? } else { ?>
+                <table>
+                    <thead>
+                        <tr>
+                            <th class="sn-header" rowspan="2">S.N.</th> <th class="avg-header" rowspan="2">Avg Sangat</th> <th class="centre-header" rowspan="2">Centre/Subcentre</th>
+                            <? if (sortedDates && sortedDates.length > 0) { ?> <? for (var i = 0; i < sortedDates.length; i++) { ?> <th class="date-header" colspan="<?= eventDetailHeaders.length ?>"><?= sortedDates[i] /* Adjusted Date Header */ ?></th> <? } ?> <? } ?>
+                        </tr>
+                        <tr>
+                            <? if (sortedDates && sortedDates.length > 0) { ?> <? for (var d = 0; d < sortedDates.length; d++) { ?> <? for (var c = 0; c < eventDetailHeaders.length; c++) { ?> <th class="sub-header"><?= eventDetailHeaders[c] ?></th> <? } ?> <? } ?> <? } ?>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <? for (var i = 0; i < data.templateData.length; i++) { var centreRow = data.templateData[i]; ?>
+                            <tr>
+                                <td class="sn-cell"><?= i + 1 ?></td> <td class="avg-cell"><?= centreRow.averageSangat ?></td> <td class="centre-cell <?= centreRow.isBold ? 'bold-centre' : '' ?>"><?= centreRow.centre ?></td>
+                                <? if (sortedDates && sortedDates.length > 0) { ?> <? for (var d = 0; d < sortedDates.length; d++) { var dateKey = sortedDates[d]; var eventDataForDate = centreRow.dateData[dateKey] || {}; ?> <? eventDetailKeys.forEach(colKey => { var displayValue = eventDataForDate[colKey]; displayValue = (displayValue === null || displayValue === undefined) ? '' : displayValue; ?> <td><?= displayValue ?></td> <? }); ?> <? } ?> <? } ?>
+                            </tr>
+                        <? } ?>
+                    </tbody>
+                </table>
+            <? } ?>
+        <? } ?>
+
+        <? generatePivotedTable('Sunday Satsangs', sundayData, sundayData ? sundayData.sortedDates : [], eventDetailHeaders, eventDetailKeys, selectedMonth); ?>
+        <? generatePivotedTable('Wednesday Satsangs', wednesdayData, wednesdayData ? wednesdayData.sortedDates : [], eventDetailHeaders, eventDetailKeys, selectedMonth); ?>
+
+
+        <!-- ===================================================== -->
+        <!-- UNPIVOTED LIST TABLE (Special Satsangs)             -->
+        <!-- ===================================================== -->
+        <h2>Special Satsangs (Other Days)</h2>
+        <?
+          // Define local variables for the special table section
+          var _specialData = typeof specialData !== 'undefined' ? specialData : null;
+          var _headers = typeof specialEventTableHeaders !== 'undefined' ? specialEventTableHeaders : null;
+          var _keys = typeof specialEventTableKeys !== 'undefined' ? specialEventTableKeys : null;
+          var _displayMonth = selectedMonth;
+          try { var parts = selectedMonth.split('-'); var date = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, 1); _displayMonth = date.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }); } catch(e) {}
+
+          // Check if data exists
+          if (!_specialData || _specialData.length === 0) {
+        ?>
+            <p class="no-data">No special satsang data available for <?= _displayMonth ?>.</p>
+        <?
+          // Check if headers/keys config exists (problem if data exists but config doesn't)
+          } else if (!_headers || _headers.length === 0 || !_keys || _keys.length === 0) {
+        ?>
+            <p class="status-error">Error: Special Satsang table configuration is missing. Cannot display data.</p>
+        <?
+          // If both data and config exist, build the table
+          } else {
+        ?>
+            <table>
+                <thead>
+                    <tr>
+                        <? _headers.forEach(header => { ?>
+                            <th><?= header ?></th>
+                        <? }); ?>
+                    </tr>
+                </thead>
+                <tbody>
+                    <? _specialData.forEach(event => { // Loop through the array of event objects ?>
+                        <tr>
+                            <? _keys.forEach(key => { // Loop through the keys to get cell data
+                                 var displayValue = event[key];
+                                 displayValue = (displayValue === null || displayValue === undefined) ? '' : displayValue;
+                            ?>
+                                <td><?= displayValue ?></td>
+                            <? }); ?>
+                        </tr>
+                    <? }); ?>
+                </tbody>
+            </table>
+        <?
+          } // End of the 'else' for building the special table
+        ?>
+
+    <? } // End of the primary <? } else { ?> block after error/no selected month check ?>
+
+    <!-- Add this next to your existing export button -->
+    <button id="exportCompleteButton" class="control-button">Export Complete Report</button>
+    <span id="exportCompleteStatus"></span>
+
+    <!-- JavaScript for both export buttons -->
+    <script>
+      // Export button for regular export
+      document.getElementById('exportButton').addEventListener('click', function() {
+        var selectedMonth = '<?= selectedMonth ?>';
+        var statusSpan = document.getElementById('exportStatus');
+        var exportButton = this;
+        
+        if (!selectedMonth) {
+          statusSpan.textContent = 'Error: No month selected.';
+          statusSpan.className = 'status-error';
+          return;
+        }
+        
+        statusSpan.textContent = 'Generating Excel for ' + selectedMonth + '...';
+        statusSpan.className = '';
+        exportButton.disabled = true;
+        
+        google.script.run
+          .withSuccessHandler(function(downloadUrl) {
+            if (downloadUrl && typeof downloadUrl === 'string' && downloadUrl.startsWith('http')) {
+              statusSpan.textContent = 'Export successful!';
+              statusSpan.className = 'status-success';
+              
+              var link = document.createElement('a');
+              link.href = downloadUrl;
+              link.target = '_blank';
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+              
+              setTimeout(() => {
+                statusSpan.textContent = '';
+                statusSpan.className = '';
+              }, 7000);
+            } else {
+              statusSpan.textContent = 'Export failed. Invalid response. Check Logs.';
+              statusSpan.className = 'status-error';
+              console.error('Export failed, invalid URL:', downloadUrl);
+            }
+            exportButton.disabled = false;
+          })
+          .withFailureHandler(function(error) {
+            statusSpan.textContent = 'Export failed: ' + error.message;
+            statusSpan.className = 'status-error';
+            console.error('Export Error:', error);
+            exportButton.disabled = false;
+          })
+          .exportFilteredDataToExcel(selectedMonth);
+      });
+      
+      // Export button for complete export
+      document.getElementById('exportCompleteButton').addEventListener('click', function() {
+        var selectedMonth = '<?= selectedMonth ?>';
+        var statusSpan = document.getElementById('exportCompleteStatus');
+        var exportButton = this;
+        
+        if (!selectedMonth) {
+          statusSpan.textContent = 'Error: No month selected.';
+          statusSpan.className = 'status-error';
+          return;
+        }
+        
+        statusSpan.textContent = 'Generating Complete Excel for ' + selectedMonth + '...';
+        statusSpan.className = '';
+        exportButton.disabled = true;
+        
+        google.script.run
+          .withSuccessHandler(function(downloadUrl) {
+            if (downloadUrl && typeof downloadUrl === 'string' && downloadUrl.startsWith('http')) {
+              statusSpan.textContent = 'Complete Export successful!';
+              statusSpan.className = 'status-success';
+              
+              var link = document.createElement('a');
+              link.href = downloadUrl;
+              link.target = '_blank';
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+              
+              setTimeout(() => {
+                statusSpan.textContent = '';
+                statusSpan.className = '';
+              }, 7000);
+            } else {
+              statusSpan.textContent = 'Complete Export failed. Invalid response. Check Logs.';
+              statusSpan.className = 'status-error';
+              console.error('Complete Export failed, invalid URL:', downloadUrl);
+            }
+            exportButton.disabled = false;
+          })
+          .withFailureHandler(function(error) {
+            statusSpan.textContent = 'Complete Export failed: ' + error.message;
+            statusSpan.className = 'status-error';
+            console.error('Complete Export Error:', error);
+            exportButton.disabled = false;
+          })
+          .exportCompleteDataToExcel(selectedMonth);
+      });
+    </script>
+
+</body>
+</html>
