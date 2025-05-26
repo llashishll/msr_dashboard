@@ -24,6 +24,7 @@
       tbody tr:hover td { background-color: #f1f1f1 !important; }
       th.sn-header.sub, th.avg-header.sub, th.centre-header.sub { top: 28px; z-index: 11; }
       td.centre-cell.bold-centre { font-weight: bold; }
+      td.centre-cell.missing-data { color: red; }
 
       /* General Styles */
       h1 { margin-bottom: 5px; }
@@ -48,7 +49,9 @@
             <? if (availableMonths && availableMonths.length > 0) { ?> <? availableMonths.forEach(month => { var displayMonth = month; try { var parts = month.split('-'); var date = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, 1); displayMonth = date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' }); } catch(e) {} ?> <option value="<?= month ?>" <?= month === selectedMonth ? 'selected' : '' ?>><?!= displayMonth ?></option> <? }) ?> <? } else if (selectedMonth) { ?> <? var displayMonth = selectedMonth; try { var parts = selectedMonth.split('-'); var date = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, 1); displayMonth = date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' }); } catch(e) {} ?> <option value="<?= selectedMonth ?>" selected><?!= displayMonth ?> (No Data)</option> <? } else { ?> <option value="" disabled selected>-- No Months Available --</option> <? } ?>
         </select>
         <button id="exportButton" <?!= !selectedMonth ? 'disabled' : '' ?> >Export <?= selectedMonth ? selectedMonth : 'Month' ?> to Excel</button>
+        <button id="copyMissingButton" <?!= !selectedMonth ? 'disabled' : '' ?>>Copy Missing Dates</button>
         <span id="exportStatus"></span>
+        <span id="copyStatus"></span>
     </div>
 
     <? if (error) { ?>
@@ -79,7 +82,7 @@
                     <tbody>
                         <? for (var i = 0; i < data.templateData.length; i++) { var centreRow = data.templateData[i]; ?>
                             <tr>
-                                <td class="sn-cell"><?= i + 1 ?></td> <td class="avg-cell"><?= centreRow.averageSangat ?></td> <td class="centre-cell <?= centreRow.isBold ? 'bold-centre' : '' ?>"><?= centreRow.centre ?></td>
+                                <td class="sn-cell"><?= i + 1 ?></td> <td class="avg-cell"><?= centreRow.averageSangat ?></td> <td class="centre-cell <?= centreRow.isBold ? 'bold-centre' : '' ?><?= centreRow.isMissingData ? ' missing-data' : '' ?>"><?= centreRow.centre ?></td>
                                 <? if (sortedDates && sortedDates.length > 0) { ?> <? for (var d = 0; d < sortedDates.length; d++) { var dateKey = sortedDates[d]; var eventDataForDate = centreRow.dateData[dateKey] || {}; ?> <? eventDetailKeys.forEach(colKey => { var displayValue = eventDataForDate[colKey]; displayValue = (displayValue === null || displayValue === undefined) ? '' : displayValue; ?> <td><?= displayValue ?></td> <? }); ?> <? } ?> <? } ?>
                             </tr>
                         <? } ?>
@@ -148,8 +151,75 @@
     <button id="exportCompleteButton" class="control-button">Export Complete Report</button>
     <span id="exportCompleteStatus"></span>
 
-    <!-- JavaScript for both export buttons -->
+    <!-- JavaScript for all buttons -->
     <script>
+      // Month selector functionality
+      document.getElementById('monthSelector').addEventListener('change', function() {
+        var newMonth = this.value;
+        if (newMonth) {
+          var currentUrl = new URL(window.location.href);
+          var params = currentUrl.searchParams;
+          params.set('month', newMonth);
+          params.delete('sundaySort'); // Reset sort when month changes
+          
+          // Reconstruct the URL with the new parameters
+          currentUrl.search = params.toString();
+          window.location.href = currentUrl.toString();
+        }
+      });
+
+      // Copy missing Dates button functionality
+      document.getElementById('copyMissingButton').addEventListener('click', function() {
+        var statusSpan = document.getElementById('copyStatus');
+        var copyButton = this;
+        
+        statusSpan.textContent = 'Finding missing date entries...';
+        statusSpan.className = '';
+        copyButton.disabled = true;
+        
+        google.script.run
+          .withSuccessHandler(function(missingEntries) {
+            if (missingEntries && missingEntries.length > 0) {
+              // Group by day type
+              var sundayLines = [];
+              var wednesdayLines = [];
+              missingEntries.forEach(function(line) {
+                if (line.includes('(Sunday):')) {
+                  sundayLines.push(line.replace(' (Sunday):', ':'));
+                } else if (line.includes('(Wednesday):')) {
+                  wednesdayLines.push(line.replace(' (Wednesday):', ':'));
+                }
+              });
+              var textToCopy = 'Centers with missing date entries:\n\n';
+              if (sundayLines.length > 0) {
+                textToCopy += 'SUNDAY :\n' + sundayLines.join('\n') + '\n';
+              }
+              if (wednesdayLines.length > 0) {
+                textToCopy += '\nWEDNESDAY:\n' + wednesdayLines.join('\n') + '\n';
+              }
+              navigator.clipboard.writeText(textToCopy)
+                .then(() => {
+                  statusSpan.textContent = 'Copied to clipboard!';
+                  statusSpan.className = 'status-success';
+                })
+                .catch(err => {
+                  statusSpan.textContent = 'Failed to copy: ' + err;
+                  statusSpan.className = 'status-error';
+                });
+            } else {
+              statusSpan.textContent = 'No missing date entries found.';
+              statusSpan.className = 'status-success';
+            }
+            copyButton.disabled = false;
+          })
+          .withFailureHandler(function(error) {
+            statusSpan.textContent = 'Error: ' + error.message;
+            statusSpan.className = 'status-error';
+            copyButton.disabled = false;
+          })
+          .findMissingDateEntries('<?= selectedMonth ?>');
+      });
+      
       // Export button for regular export
       document.getElementById('exportButton').addEventListener('click', function() {
         var selectedMonth = '<?= selectedMonth ?>';
@@ -247,6 +317,33 @@
           })
           .exportCompleteDataToExcel(selectedMonth);
       });
+    </script>
+
+    <button id="sortOrderBtn" onclick="toggleSortOrder()">Sort: <span id="sortOrderLabel"></span></button>
+
+    <script>
+    let currentSortOrder = 'alphabetical'; // or 'custom', set default as needed
+
+    function toggleSortOrder() {
+      currentSortOrder = (currentSortOrder === 'alphabetical') ? 'custom' : 'alphabetical';
+      document.getElementById('sortOrderLabel').innerText = 
+        (currentSortOrder === 'alphabetical') ? 'A-Z' : 'Custom';
+      reloadDashboard();
+    }
+
+    function reloadDashboard() {
+      // This assumes you have a function to reload the dashboard data.
+      // You may need to adjust this to fit your actual data loading logic.
+      google.script.run
+        .withSuccessHandler(renderDashboard)
+        .doGet({sundaySort: currentSortOrder});
+    }
+
+    // On page load, set the label
+    window.onload = function() {
+      document.getElementById('sortOrderLabel').innerText = 
+        (currentSortOrder === 'alphabetical') ? 'A-Z' : 'Custom';
+    };
     </script>
 
 </body>

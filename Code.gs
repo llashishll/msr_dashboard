@@ -892,6 +892,9 @@ function createPivotedExcelSheet(sheet, result, title) {
     if (centreData.isBold) {
       sheet.getRange(rowIndex, 1).setFontWeight("bold");
     }
+    if (centreData.isMissingData) {
+      sheet.getRange(rowIndex, 1).setFontColor("#FF0000"); // Red for missing data
+    }
     sheet.getRange(rowIndex, 2).setValue(centreData.averageSangat);
 
     // Date data
@@ -1203,6 +1206,56 @@ function changeMonth(newMonth) {
 /**
  * Exports complete data with all columns in the same format as the web app
  */
+function findMissingDateEntries(selectedMonth) {
+  const scriptTimeZone = Session.getScriptTimeZone();
+  const currentMonth =
+    selectedMonth ||
+    Utilities.formatDate(new Date(), scriptTimeZone, "yyyy-MM");
+  const processedDataResult = getDataForDashboard(currentMonth);
+
+  if (processedDataResult.error) {
+    throw new Error(processedDataResult.error);
+  }
+
+  const results = [];
+
+  // Check Sundays
+  const sundayResult = processedDataResult.sunday;
+  if (
+    sundayResult &&
+    sundayResult.templateData &&
+    sundayResult.templateData.length > 0
+  ) {
+    const sundayDates = sundayResult.sortedDates || [];
+    sundayResult.templateData.forEach((center) => {
+      const centerName = center.centre;
+      const missingDates = sundayDates.filter((date) => !center.dateData[date]);
+      if (missingDates.length > 0) {
+        results.push(`${centerName} (Sunday): ${missingDates.join(", ")}`);
+      }
+    });
+  }
+
+  // Check Wednesdays
+  const wednesdayResult = processedDataResult.wednesday;
+  if (
+    wednesdayResult &&
+    wednesdayResult.templateData &&
+    wednesdayResult.templateData.length > 0
+  ) {
+    const wednesdayDates = wednesdayResult.sortedDates || [];
+    wednesdayResult.templateData.forEach((center) => {
+      const centerName = center.centre;
+      const missingDates = wednesdayDates.filter((date) => !center.dateData[date]);
+      if (missingDates.length > 0) {
+        results.push(`${centerName} (Wednesday): ${missingDates.join(", ")}`);
+      }
+    });
+  }
+
+  return results;
+}
+
 function exportCompleteDataToExcel(requestedMonth) {
   const scriptTimeZone = Session.getScriptTimeZone();
   const selectedMonth =
@@ -1434,6 +1487,9 @@ function createCompletePivotedExcelSheet(sheet, result, title) {
     sheet.getRange(rowIndex, 1).setValue(centreData.centre);
     if (centreData.isBold) {
       sheet.getRange(rowIndex, 1).setFontWeight("bold");
+    }
+    if (centreData.isMissingData) {
+      sheet.getRange(rowIndex, 1).setFontColor("#FF0000"); // Red for missing data
     }
     sheet.getRange(rowIndex, 2).setValue(centreData.averageSangat);
 
