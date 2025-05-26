@@ -110,10 +110,9 @@ const boldCentres = ["ALWAR", "ALWAR-2", "RAMGARH", "KHAIRTHAL", "CHIKANI"];
  */
 function doGet(e) {
   // Determine Sunday sort preference from URL parameter, default to 'alphabetical'
-  const sundaySortPref =
+  const sundaySortParam =
     e && e.parameter && e.parameter.sundaySort
       ? e.parameter.sundaySort
-      : "alphabetical";
   // Set script timezone early
   try {
     Session.setScriptTimeZone(SCRIPT_TIMEZONE);
@@ -128,17 +127,25 @@ function doGet(e) {
   const template = HtmlService.createTemplateFromFile("Index");
 
   // --- Get Processed Data ---
+  // Always get alphabetical for comparison/option
   const processedDataResult = getDataForDashboard(
     requestedMonth,
-    sundaySortPref
-  );
+    "alphabetical" // Always process alphabetically for one dataset
+  ); // Pass sort order to getDataForDashboard
+
+  let sundayDataCustomSorted = null;
+  // Only get custom sorted data if requested or if alphabetical wasn't available/default
+  if (sundaySortParam === "custom" || !processedDataResult.sunday) {
+     sundayDataCustomSorted = getDataForDashboard(requestedMonth, "custom").sunday;
+  }
 
   // --- Assign data to template ---
-  template.sundayData = processedDataResult.sunday;
+  template.sundayDataAlphabeticalSorted = processedDataResult.sunday;
+  template.sundayDataCustomSorted = sundayDataCustomSorted; // This might be null if not requested
   template.wednesdayData = processedDataResult.wednesday;
   template.specialData = processedDataResult.special; // Array of objects or empty array
   template.error = processedDataResult.error;
-  template.availableMonths = processedDataResult.availableMonths;
+ template.availableMonths = processedDataResult.availableMonths;
   template.selectedMonth = processedDataResult.selectedMonth;
   template.sundaySortPreference = sundaySortPref; // Pass current sort preference to the template
 
@@ -146,7 +153,8 @@ function doGet(e) {
   // For Pivoted Tables (Sun/Wed)
   template.eventDetailHeaders = eventDetailColumns.map((col) => col.name);
   template.eventDetailKeys = eventDetailColumns.map((col) => col.key);
-  // For Special Satsang List Table
+  // For Pivoted Tables (Sun/Wed) Missing Data (client side)
+  template.missingSundayEntries = getMissingSundayEntries(processedDataResult.sunday); // Pass missing data info
   template.specialEventTableHeaders = specialEventHeaders.map((h) => h.name); // Uses global const
   template.specialEventTableKeys = specialEventHeaders.map((h) => h.key); // Uses global const
 
@@ -279,14 +287,16 @@ function parseDateValue(dateValue, rowIndex) {
  * Fetches data, filters, categorizes. Processes Sun/Wed with pivot, Special as list.
  */
 function getDataForDashboard(requestedMonth) {
+  Logger.log(`Getting data for month: ${requestedMonth}`);
   const scriptTimeZone = Session.getScriptTimeZone();
   let sundayRows = [];
   let wednesdayRows = [];
   let specialRows = []; // Store { valueRow, displayRow, ymd }
   let availableMonthsSet = new Set();
   let error = null;
-  let actualSelectedMonth = null;
+  let selectedMonthForDisplay = null;
   let allValidDataItems = [];
+  let sundayResult = null; // Will hold the processed Sunday data based on sort preference
 
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -327,15 +337,17 @@ function getDataForDashboard(requestedMonth) {
       .sort()
       .reverse();
     const currentMonth = Utilities.formatDate(
-      new Date(),
+      new Date(), // Use current date to find current month
       scriptTimeZone,
       "yyyy-MM"
     );
     Logger.log(
       `Current month (${scriptTimeZone}): ${currentMonth}, Requested: ${requestedMonth}`
     );
+
+    // Determine which month to actually display
     if (requestedMonth && availableMonthsSet.has(requestedMonth)) {
-      actualSelectedMonth = requestedMonth;
+      selectedMonthForDisplay = requestedMonth;
     } else if (availableMonthsSet.has(currentMonth)) {
       actualSelectedMonth = currentMonth;
     } else if (sortedAvailableMonths.length > 0) {
@@ -348,23 +360,26 @@ function getDataForDashboard(requestedMonth) {
         special: [],
         error: "No data with valid dates found.",
         availableMonths: [],
-        selectedMonth: null,
+        selectedMonth: selectedMonthForDisplay,
       };
     }
-    Logger.log(`Selected month for display: ${actualSelectedMonth}`);
+    Logger.log(`Selected month for display: ${selectedMonthForDisplay}`);
 
     // --- Second Pass: Filter and Categorize ---
     const filteredDataItems = allValidDataItems.filter((item) =>
-      item.ymd.startsWith(actualSelectedMonth)
+      item.ymd.startsWith(selectedMonthForDisplay)
     );
     Logger.log(
-      `Found ${filteredDataItems.length} rows for month ${actualSelectedMonth}. Categorizing...`
+      `Found ${filteredDataItems.length} rows for month ${selectedMonthForDisplay}. Categorizing...`
     );
     filteredDataItems.forEach((item) => {
       const dayValue = (item.displayRow[COL_DAY - 1] || "")
         .toString()
         .trim()
         .toLowerCase();
+      // Note: Date value is already processed into item.ymd and availableMonthsSet
+      // Centre name is only needed here for filtering empty rows
+
       const centreName = item.displayRow[COL_CENTRE - 1];
       if (!centreName || centreName.trim() === "") return;
       if (dayValue === "sunday" || dayValue === "रविवार") sundayRows.push(item);
@@ -377,11 +392,16 @@ function getDataForDashboard(requestedMonth) {
     );
 
     // --- Process Data ---
-    const sundayResult = processAndSortData(
-      sundayRows,
-      actualSelectedMonth,
-      true
-    ); // Pivot Sun, isSundayData = true
+    // Process Sunday data based on the requested sort order
+    if (sundaySortOrder === "custom") {
+      sundayResult = processAndSortData(sundayRows, selectedMonthForDisplay, true); // Custom sort for Sunday
+    } else {
+      // Default to alphabetical sort for Sunday (and for all other data types)
+      sundayResult = processAndSortData(sundayRows, selectedMonthForDisplay, false); // Alphabetical sort for Sunday
+    }
+
+    // Process Wednesday and Special data (always alphabetical sort implicitly by processAndSortData logic)
+    // (Unless we add specific sorting for them later)
     const wednesdayResult = processAndSortData(
       wednesdayRows,
       actualSelectedMonth,
@@ -393,10 +413,10 @@ function getDataForDashboard(requestedMonth) {
       sunday: sundayResult,
       wednesday: wednesdayResult,
       special: specialResultArray, // Array
-      error: null,
+      error: null, // Clear previous error
       availableMonths: sortedAvailableMonths.reverse(), // Ascending for dropdown
-      selectedMonth: actualSelectedMonth,
-    };
+      selectedMonth: selectedMonthForDisplay,
+    }; // Return the specific Sunday result based on the requested sort
   } catch (err) {
     Logger.log("Error in getDataForDashboard: " + err + " Stack: " + err.stack);
     const sortedMonths = Array.from(availableMonthsSet).sort().reverse();
@@ -405,7 +425,7 @@ function getDataForDashboard(requestedMonth) {
       wednesday: null,
       special: [],
       error: "Failed to load data: " + err.message,
-      availableMonths: sortedMonths.reverse(),
+      availableMonths: sortedMonths.reverse(), // Keep months even if data fails
       selectedMonth: actualSelectedMonth,
     };
   }
@@ -415,11 +435,14 @@ function getDataForDashboard(requestedMonth) {
  * Helper function to pivot Sun/Wed data, calculate averages, apply custom sorting,
  * and adjust date headers +1 day for display.
  * Uses ymd (in SCRIPT_TIMEZONE) for internal logic, display values for cells.
+ * @param {Array<Object>} dataItems Filtered data rows for the specific day type ({ valueRow, displayRow, ymd }).
+ * @param {string} selectedMonth The month (YYYY-MM) being processed.
+ * @param {boolean} useCustomSortForCentres If true, applies custom sorting and includes all custom centres.
  */
-function processAndSortData(dataItems, selectedMonth, isSundayData = false) {
+function processAndSortData(dataItems, selectedMonth, useCustomSortForCentres = false) {
   const scriptTimeZone = Session.getScriptTimeZone();
   // Early exit if no data items AND it's not Sunday data where we need to show all custom centres
-  if ((!dataItems || dataItems.length === 0) && !isSundayData) {
+  if ((!dataItems || dataItems.length === 0) && !useCustomSortForCentres) {
     return { templateData: [], sortedDates: [] };
   }
   // If it IS Sunday data and dataItems is empty, we proceed to show all custom centres.
@@ -534,11 +557,11 @@ function processAndSortData(dataItems, selectedMonth, isSundayData = false) {
     `Sorted (original) date pivot keys ('dd-MM-yyyy') for month ${selectedMonth} (${
       isSundayData ? "Sunday" : "Other"
     }): ${sortedDateKeys.join(", ")}`
-  );
+  ); // Log remains, but isSundayData arg was removed
 
   const finalTemplateData = [];
   const centresAlreadyAddedToFinal = new Set();
-
+  const centresFromProcessed = Object.keys(processedData);
   // If it's Sunday data, iterate through customCentreOrder first to ensure all are present
   if (isSundayData) {
     customCentreOrder.forEach((centreName) => {
@@ -551,13 +574,15 @@ function processAndSortData(dataItems, selectedMonth, isSundayData = false) {
           // Centre has no Sunday data entries at all this month
           isMissingData = true;
         } else {
-          // Check if this centre is missing data for any specific Sunday date
+          // Check if this centre is missing data for any specific Sunday date *in the processed data*
+          // We only care about dates that were actually present in the raw data for the month.
           for (const dateKey of sortedDateKeys) {
             if (!centreDataFromProcessed.dateData[dateKey]) {
               isMissingData = true; // Missing data for at least one Sunday
               break;
             }
           }
+          // If a centre in customOrder had data, but not for all dates, isMissingData is true
         }
       }
       // If sortedDateKeys.length is 0 (no Sundays in the data for this month),
@@ -583,7 +608,7 @@ function processAndSortData(dataItems, selectedMonth, isSundayData = false) {
       centresAlreadyAddedToFinal.add(centreName);
     });
   }
-
+  
   // Add remaining centres from processedData (those not in customCentreOrder, or if not SundayData)
   // These are centres that had data but weren't in the custom order list (if isSundayData is false, all centres fall here)
   Object.keys(processedData)
@@ -605,6 +630,33 @@ function processAndSortData(dataItems, selectedMonth, isSundayData = false) {
         });
       }
     });
+
+  // If using custom sort, sort the final array according to custom order.
+  // If not using custom sort (alphabetical), it's already sorted or needs alphabetical sort.
+  if (useCustomSortForCentres) {
+    finalTemplateData.sort((a, b) => {
+      const indexA = customCentreOrder.indexOf(a.centre);
+      const indexB = customCentreOrder.indexOf(b.centre);
+
+      // Centres in custom list come first, in custom order
+      if (indexA !== -1 && indexB !== -1) {
+        return indexA - indexB;
+      }
+      // Centres in custom list come before those not in the list
+      if (indexA !== -1) {
+        return -1; // a comes first
+      }
+      if (indexB !== -1) {
+        return 1; // b comes first
+      }
+      // Centres not in custom list are sorted alphabetically
+      return a.centre.localeCompare(b.centre);
+    });
+  } else {
+      // Ensure alphabetical sort if not using custom sort
+      finalTemplateData.sort((a, b) => a.centre.localeCompare(b.centre));
+  }
+
 
   return {
     templateData: finalTemplateData,
@@ -648,6 +700,28 @@ function processSpecialSatsangList(dataItems) {
     `Finished processing special list. ${eventList.length} events found.`
   );
   return eventList;
+}
+
+
+/**
+ * Identifies centres with missing Sunday data entries for any date in the month.
+ * @param {Object} sundayResult The result object from processAndSortData for Sunday data.
+ * @returns {Array<Object>} An array of objects { centreName: string, missingDates: string[] }.
+ */
+function getMissingSundayEntries(sundayResult) {
+  if (!sundayResult || !sundayResult.templateData || !sundayResult.sortedDates) {
+    return [];
+  }
+  const missingEntries = [];
+  sundayResult.templateData.forEach(centreData => {
+    if (centreData.isMissingData) {
+      const missingDates = sundayResult.sortedDates.filter(dateKey =>
+        !centreData.dateData[dateKey]
+      );
+      missingEntries.push({ centreName: centreData.centre, missingDates: missingDates });
+    }
+  });
+  return missingEntries;
 }
 
 /**
@@ -981,18 +1055,18 @@ function deleteTemporaryFile() {
 }
 
 /**
- * Function to get the filtered data for client-side use
+ * Function to get the Sunday data for client-side sorting.
+ * @param {string} requestedMonth The month (YYYY-MM) to fetch data for.
+ * @param {string} sortOrder The requested sort order ('alphabetical' or 'custom').
+ * @returns {Object} The Sunday data result object or an error object.
  */
-function getFilteredDataForExport(requestedMonth) {
+function getSundayData(requestedMonth, sortOrder) {
   try {
-    const result = getDataForDashboard(requestedMonth);
-    return result;
+    return getDataForDashboard(requestedMonth, sortOrder).sunday;
   } catch (e) {
-    Logger.log("Error getting filtered data: " + e);
-    return { error: "Failed to get filtered data: " + e.message };
+    return { error: "Failed to get Sunday data: " + e.message };
   }
 }
-
 /**
  * Exports filtered data to Excel for the specified month
  * This function is called by the regular Export button
@@ -1008,7 +1082,7 @@ function exportFilteredDataToExcel(requestedMonth) {
 
   try {
     // Get data using the same process as the web app
-    const processedDataResult = getDataForDashboard(selectedMonth);
+    const processedDataResult = getDataForDashboard(selectedMonth, 'alphabetical'); // Export uses alphabetical sort
 
     if (processedDataResult.error) {
       throw new Error(processedDataResult.error);

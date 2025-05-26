@@ -3,40 +3,7 @@
 <head>
     <base target="_top">
     <title>Satsang Dashboard by Day</title>
-    <style>
-      /* Basic Styles */
-      body { font-family: Arial, sans-serif; font-size: 11px; margin: 15px; }
-      table { border-collapse: collapse; width: auto; border: 1px solid #ccc; margin-bottom: 25px; }
-      th, td { border: 1px solid #ccc; padding: 4px 6px; text-align: center; vertical-align: middle; box-sizing: border-box; }
-      th { background-color: #f2f2f2; font-weight: bold; position: sticky; top: 0; z-index: 10; }
-
-      /* Pivoted Table Specific Styles */
-      .date-header { background-color: #e0e0e0; font-size: 12px; position: sticky; top: 0; z-index: 11; }
-      .sub-header { position: sticky; top: 28px; background-color: #f2f2f2; z-index: 10; } /* Adjust top based on date-header height */
-      th.sn-header, td.sn-cell { position: sticky; left: 0; z-index: 12; background-color: #e8e8e8; min-width: 40px; width: 40px; }
-      th.avg-header, td.avg-cell { position: sticky; left: 40px; z-index: 12; background-color: #e8e8e8; min-width: 80px; width: 80px; }
-      th.centre-header { position: sticky; left: 120px; z-index: 12; background-color: #e8e8e8; min-width: 130px; width: 130px; }
-      td.sn-cell { background-color: #f9f9f9; z-index: 1; font-weight: normal; }
-      td.avg-cell { position: sticky; left: 40px; background-color: #f9f9f9; z-index: 1; }
-      td.centre-cell { position: sticky; left: 120px; background-color: #f9f9f9; z-index: 1; text-align: center; } /* Center align centre name */
-      tbody tr:nth-child(even) td.sn-cell, tbody tr:nth-child(even) td.avg-cell, tbody tr:nth-child(even) td.centre-cell { background-color: #f0f0f0; }
-      tbody tr:hover td.sn-cell, tbody tr:hover td.avg-cell, tbody tr:hover td.centre-cell { background-color: #e0e0e0 !important; }
-      tbody tr:hover td { background-color: #f1f1f1 !important; }
-      th.sn-header.sub, th.avg-header.sub, th.centre-header.sub { top: 28px; z-index: 11; }
-      td.centre-cell.bold-centre { font-weight: bold; }
-
-      /* General Styles */
-      h1 { margin-bottom: 5px; }
-      h2 { background-color: #4CAF50; color: white; padding: 8px 15px; margin-top: 20px; margin-bottom: 10px; border-radius: 4px; font-size: 1.3em; }
-      .no-data { font-style: italic; color: #777; margin-left: 15px; margin-bottom: 20px; }
-      .controls { margin-bottom: 20px; padding: 10px; background-color: #eee; border: 1px solid #ccc; border-radius: 4px; display: flex; align-items: center; gap: 15px; flex-wrap: wrap; }
-      .controls label { font-weight: bold; margin-right: 5px; }
-      .controls select, .controls button { padding: 5px 8px; font-size: 11px; cursor: pointer; }
-      .controls button:disabled { cursor: not-allowed; opacity: 0.6; }
-      #exportStatus { margin-left: 10px; font-style: italic; color: #333; }
-      .status-error { color: red; font-weight: bold;}
-      .status-success { color: green; }
-    </style>
+    <link rel="stylesheet" href="dashboard_styles.css">
 </head>
 <body>
     <h1>Satsang Report by Day</h1>
@@ -49,6 +16,9 @@
         </select>
         <button id="exportButton" <?!= !selectedMonth ? 'disabled' : '' ?> >Export <?= selectedMonth ? selectedMonth : 'Month' ?> to Excel</button>
         <span id="exportStatus"></span>
+        <button id="sortCustomButton">Sort by Custom Order</button>
+        <button id="copyMissingEntriesButton">Copy Missing Sunday Entries</button>
+        <span id="copyStatus"></span>
     </div>
 
     <? if (error) { ?>
@@ -60,13 +30,13 @@
         <!-- ===================================================== -->
         <!-- PIVOTED TABLES (Sunday / Wednesday)                   -->
         <!-- ===================================================== -->
-        <? function generatePivotedTable(title, data, sortedDates, eventDetailHeaders, eventDetailKeys, selectedMonth) { ?>
+        <? function generatePivotedTable(title, data, sortedDates, eventDetailHeaders, eventDetailKeys, selectedMonth, tableId) { ?>
             <h2><?= title ?></h2>
             <? if (!data || !data.templateData || data.templateData.length === 0) { ?>
                  <? var displayMonth = selectedMonth; try { var parts = selectedMonth.split('-'); var date = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, 1); displayMonth = date.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }); } catch(e) {} ?>
                 <p class="no-data">No <?= title.toLowerCase() ?> data available for <?= displayMonth ?>.</p>
             <? } else { ?>
-                <table>
+                <table id="<?= tableId ?>">
                     <thead>
                         <tr>
                             <th class="sn-header" rowspan="2">S.N.</th> <th class="avg-header" rowspan="2">Avg Sangat</th> <th class="centre-header" rowspan="2">Centre/Subcentre</th>
@@ -88,8 +58,8 @@
             <? } ?>
         <? } ?>
 
-        <? generatePivotedTable('Sunday Satsangs', sundayData, sundayData ? sundayData.sortedDates : [], eventDetailHeaders, eventDetailKeys, selectedMonth); ?>
-        <? generatePivotedTable('Wednesday Satsangs', wednesdayData, wednesdayData ? wednesdayData.sortedDates : [], eventDetailHeaders, eventDetailKeys, selectedMonth); ?>
+        <? generatePivotedTable('Sunday Satsangs', sundayData, sundayData ? sundayData.sortedDates : [], eventDetailHeaders, eventDetailKeys, selectedMonth, 'sundayTable'); ?>
+        <? generatePivotedTable('Wednesday Satsangs', wednesdayData, wednesdayData ? wednesdayData.sortedDates : [], eventDetailHeaders, eventDetailKeys, selectedMonth, 'wednesdayTable'); ?>
 
 
         <!-- ===================================================== -->
@@ -150,9 +120,12 @@
 
     <!-- JavaScript for both export buttons -->
     <script>
+      const selectedMonth = '<?= selectedMonth ?>';
+      const eventDetailHeadersJs = <?= JSON.stringify(eventDetailHeaders) ?>;
+      const eventDetailKeysJs = <?= JSON.stringify(eventDetailKeys) ?>;
+
       // Export button for regular export
       document.getElementById('exportButton').addEventListener('click', function() {
-        var selectedMonth = '<?= selectedMonth ?>';
         var statusSpan = document.getElementById('exportStatus');
         var exportButton = this;
         
@@ -201,7 +174,6 @@
       
       // Export button for complete export
       document.getElementById('exportCompleteButton').addEventListener('click', function() {
-        var selectedMonth = '<?= selectedMonth ?>';
         var statusSpan = document.getElementById('exportCompleteStatus');
         var exportButton = this;
         
@@ -247,6 +219,119 @@
           })
           .exportCompleteDataToExcel(selectedMonth);
       });
+
+      // Sort button for custom order
+      document.getElementById('sortCustomButton').addEventListener('click', function() {
+        var sortButton = this;
+        var statusSpan = document.getElementById('copyStatus'); // Using copyStatus for sort messages for now
+        sortButton.disabled = true;
+        sortButton.textContent = 'Sorting...';
+        statusSpan.textContent = 'Sorting table...';
+        statusSpan.className = '';
+
+        google.script.run
+          .withSuccessHandler(function(sundayDataResult) {
+            if (sundayDataResult && sundayDataResult.templateData) {
+              // Re-render the Sunday table
+              const sundayTable = document.getElementById('sundayTable');
+              if (sundayTable) {
+                // Clear existing rows
+                const tbody = sundayTable.getElementsByTagName('tbody')[0];
+                tbody.innerHTML = ''; 
+                
+                // Populate with new sorted data
+                sundayDataResult.templateData.forEach((centreRow, index) => {
+                  const row = tbody.insertRow();
+                  row.insertCell().textContent = index + 1;
+                  row.cells[0].className = 'sn-cell';
+                  row.insertCell().textContent = centreRow.averageSangat;
+                  row.cells[1].className = 'avg-cell';
+                  row.insertCell().textContent = centreRow.centre;
+                  row.cells[2].className = 'centre-cell ' + (centreRow.isBold ? 'bold-centre' : '');
+
+                  if (sundayDataResult.sortedDates && sundayDataResult.sortedDates.length > 0) {
+                    sundayDataResult.sortedDates.forEach(dateKey => {
+                      const eventDataForDate = centreRow.dateData[dateKey] || {};
+                      eventDetailKeysJs.forEach(colKey => {
+                        let displayValue = eventDataForDate[colKey];
+                        displayValue = (displayValue === null || displayValue === undefined) ? '' : displayValue;
+                        row.insertCell().textContent = displayValue;
+                      });
+                    });
+                  }
+                });
+              }
+              statusSpan.textContent = 'Table sorted by custom order.';
+              statusSpan.className = 'status-success';
+              sortButton.textContent = 'Sort by Custom Order';
+            } else if (sundayDataResult && sundayDataResult.error) {
+                statusSpan.textContent = 'Error sorting: ' + sundayDataResult.error;
+                statusSpan.className = 'status-error';
+                sortButton.textContent = 'Sort by Custom Order';
+            } else {
+                statusSpan.textContent = 'Error sorting: No data returned.';
+                statusSpan.className = 'status-error';
+                sortButton.textContent = 'Sort by Custom Order';
+            }
+            sortButton.disabled = false;
+            setTimeout(() => { statusSpan.textContent = ''; statusSpan.className = ''; }, 7000);
+          })
+          .withFailureHandler(function(error) {
+            statusSpan.textContent = 'Failed to sort: ' + error.message;
+            statusSpan.className = 'status-error';
+            sortButton.disabled = false;
+            sortButton.textContent = 'Sort by Custom Order';
+            setTimeout(() => { statusSpan.textContent = ''; statusSpan.className = ''; }, 7000);
+          })
+          .getSundayData(selectedMonth, 'custom'); // Request custom sorted data
+      });
+
+      // Copy Missing Sunday Entries button
+      document.getElementById('copyMissingEntriesButton').addEventListener('click', function() {
+        var copyButton = this;
+        var statusSpan = document.getElementById('copyStatus');
+        copyButton.disabled = true;
+        statusSpan.textContent = 'Processing...';
+        statusSpan.className = '';
+
+        google.script.run
+          .withSuccessHandler(function(copyString) {
+            if (copyString && typeof copyString === 'string') {
+              if (copyString === "No missing Sunday entries found.") {
+                 statusSpan.textContent = copyString;
+                 statusSpan.className = '';
+              } else {
+                navigator.clipboard.writeText(copyString)
+                  .then(() => {
+                    statusSpan.textContent = 'Copied to clipboard!';
+                    statusSpan.className = 'status-success';
+                  })
+                  .catch(err => {
+                    statusSpan.textContent = 'Failed to copy. See console.';
+                    statusSpan.className = 'status-error';
+                    console.error('Clipboard copy error:', err);
+                  });
+              }
+            } else {
+              statusSpan.textContent = 'Failed: Invalid response.';
+              statusSpan.className = 'status-error';
+              console.error('Copy missing entries failed, invalid response:', copyString);
+            }
+            copyButton.disabled = false;
+             setTimeout(() => {
+                statusSpan.textContent = '';
+                statusSpan.className = '';
+              }, 7000);
+          })
+          .withFailureHandler(function(error) {
+            statusSpan.textContent = 'Error: ' + error.message;
+            statusSpan.className = 'status-error';
+            console.error('Copy missing entries error:', error);
+            copyButton.disabled = false;
+          })
+          .getMissingSundayEntriesForClipboard(selectedMonth);
+      });
+
     </script>
 
 </body>
